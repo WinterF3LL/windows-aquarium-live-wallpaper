@@ -33,6 +33,9 @@ public static class NativeDesktop
     public static extern int SetWindowLong(IntPtr hWnd, int index, int newStyle);
 
     [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool SetLayeredWindowAttributes(IntPtr hwnd, uint colorKey, byte alpha, uint flags);
+
+    [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr SendMessageTimeout(
         IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam,
         uint flags, uint timeout, out IntPtr result);
@@ -49,22 +52,33 @@ public static class NativeDesktop
     private const int WS_EX_TOOLWINDOW = 0x00000080;
     private const int WS_EX_APPWINDOW = 0x00040000;
     private const int WS_EX_TRANSPARENT = 0x00000020;
+    private const int WS_EX_LAYERED = 0x00080000;
     private const int WS_EX_NOACTIVATE = 0x08000000;
+    private const uint LWA_ALPHA = 0x00000002;
 
     private const uint SMTO_NORMAL = 0x0000;
     private const uint SWP_NOACTIVATE = 0x0010;
     private const uint SWP_SHOWWINDOW = 0x0040;
+    private static readonly IntPtr HWND_BOTTOM = new IntPtr(1);
 
     public static IntPtr FindWallpaperHost()
     {
         IntPtr progman = FindWindow("Progman", null);
+        IntPtr worker = IntPtr.Zero;
         if (progman != IntPtr.Zero)
         {
             IntPtr result;
-            SendMessageTimeout(progman, 0x052C, IntPtr.Zero, IntPtr.Zero, SMTO_NORMAL, 1000, out result);
+            // Raised desktop on current Windows 11: create the wallpaper
+            // WorkerW as a direct child of Progman.
+            SendMessageTimeout(progman, 0x052C, new IntPtr(0xD), new IntPtr(1), SMTO_NORMAL, 1000, out result);
+            worker = FindWindowEx(progman, IntPtr.Zero, "WorkerW", null);
+            // Use the classic message only when raised-desktop creation was
+            // unavailable. Sending both can destroy/rebuild the new WorkerW.
+            if (worker == IntPtr.Zero)
+                SendMessageTimeout(progman, 0x052C, IntPtr.Zero, IntPtr.Zero, SMTO_NORMAL, 1000, out result);
         }
 
-        IntPtr worker = IntPtr.Zero;
+        IntPtr iconView = IntPtr.Zero;
 
         EnumWindows((top, lParam) =>
         {
@@ -72,8 +86,10 @@ public static class NativeDesktop
             if (shellView == IntPtr.Zero)
                 return true;
 
+            iconView = shellView;
+
             IntPtr candidate = FindWindowEx(IntPtr.Zero, top, "WorkerW", null);
-            if (candidate != IntPtr.Zero)
+            if (worker == IntPtr.Zero && candidate != IntPtr.Zero)
             {
                 worker = candidate;
                 return false;
@@ -82,7 +98,12 @@ public static class NativeDesktop
             return true;
         }, IntPtr.Zero);
 
-        return worker != IntPtr.Zero ? worker : progman;
+        // On current Windows 11 builds Explorer may keep SHELLDLL_DefView under
+        // Progman and create no usable sibling WorkerW. In that layout the
+        // DefView also paints the static wallpaper, so a sibling placed below
+        // it becomes invisible. Parenting into DefView and sending our child
+        // to the bottom keeps SysListView32 icons above the aquarium.
+        return worker != IntPtr.Zero ? worker : (iconView != IntPtr.Zero ? iconView : progman);
     }
 
     public static bool Attach(IntPtr hwnd)
@@ -98,14 +119,17 @@ public static class NativeDesktop
 
         int exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
         exStyle &= ~WS_EX_APPWINDOW;
-        exStyle |= WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE;
+        exStyle |= WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_LAYERED;
         SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
+        SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
 
         SetParent(hwnd, host);
 
         int width = GetSystemMetrics(0);
         int height = GetSystemMetrics(1);
-        SetWindowPos(hwnd, IntPtr.Zero, 0, 0, width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        // A Progman fallback shares a parent with the icon view. HWND_BOTTOM
+        // is essential there, and harmless for a dedicated wallpaper WorkerW.
+        SetWindowPos(hwnd, HWND_BOTTOM, 0, 0, width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
         return true;
     }
 

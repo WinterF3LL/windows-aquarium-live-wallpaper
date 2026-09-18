@@ -5,3 +5,8 @@ export/
 build/
 .vscode/
 .idea/
+.dream-loop/
+.wallpaper-stop
+.wallpaper-pid
+.wallpaper-covered
+native/windows_wallpaper/VisibilityMonitor.exe
