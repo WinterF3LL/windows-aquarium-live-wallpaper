@@ -64,30 +64,25 @@ public static class NativeDesktop
             SendMessageTimeout(progman, 0x052C, IntPtr.Zero, IntPtr.Zero, SMTO_NORMAL, 1000, out result);
         }
 
-        IntPtr host = IntPtr.Zero;
+        IntPtr worker = IntPtr.Zero;
+
         EnumWindows((top, lParam) =>
         {
             IntPtr shellView = FindWindowEx(top, IntPtr.Zero, "SHELLDLL_DefView", null);
-            if (shellView != IntPtr.Zero)
-            {
-                IntPtr candidate = FindWindowEx(IntPtr.Zero, top, "WorkerW", null);
-                if (candidate != IntPtr.Zero)
-                {
-                    host = candidate;
-                    return false;
-                }
+            if (shellView == IntPtr.Zero)
+                return true;
 
-                // Some Windows builds keep SHELLDLL_DefView under Progman.
-                host = top;
+            IntPtr candidate = FindWindowEx(IntPtr.Zero, top, "WorkerW", null);
+            if (candidate != IntPtr.Zero)
+            {
+                worker = candidate;
                 return false;
             }
+
             return true;
         }, IntPtr.Zero);
 
-        if (host == IntPtr.Zero)
-            host = progman;
-
-        return host;
+        return worker != IntPtr.Zero ? worker : progman;
     }
 
     public static bool Attach(IntPtr hwnd)
